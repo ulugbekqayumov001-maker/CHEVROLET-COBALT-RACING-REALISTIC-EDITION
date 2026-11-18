@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chevrolet Cobalt Racing</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #080d12; color: #fff; font-family: Arial, sans-serif; overflow: hidden; }
+  #game { display: block; width: 100vw; height: 100vh; background: #101820; }
+  .hud { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; gap: 12px; pointer-events: none; }
+  .panel { background: rgba(0,0,0,.62); border: 1px solid rgba(255,255,255,.18); border-radius: 14px; padding: 10px 15px; box-shadow: 0 8px 25px #0006; }
+  .title { font-weight: 900; letter-spacing: 1.5px; color: #8cffb0; }
+  .stats { display: flex; gap: 18px; font-weight: 700; }
+  .stats span { color: #9effbd; }
+  .help { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); text-align: center; background: #0009; border: 1px solid #ffffff26; border-radius: 14px; padding: 10px 16px; font-size: 14px; white-space: nowrap; }
+  #overlay { position: fixed; inset: 0; display: grid; place-items: center; background: #0009; }
+  .card { width: min(90vw, 420px); padding: 28px; text-align: center; border-radius: 22px; background: linear-gradient(145deg,#15232c,#080d12); border: 1px solid #8cffb066; box-shadow: 0 20px 70px #000b; }
+  h1 { margin: 0 0 8px; font-size: clamp(25px,5vw,38px); }
+  .green { color: #8cffb0; }
+  button { border: 0; border-radius: 12px; background: #8cffb0; color: #07110b; font-size: 17px; font-weight: 900; padding: 13px 25px; cursor: pointer; margin-top: 14px; }
+  button:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  @media (max-width:600px) { .stats { gap: 8px; font-size: 13px; } .panel { padding: 8px 10px; } .help { font-size: 12px; } }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud">
+  <div class="panel"><div class="title">CHEVROLET COBALT RACING</div><small>WHITE COBALT • CITY DRIVE</small></div>
+  <div class="panel stats"><div>TEZLIK<br><span id="speed">0</span> km/h</div><div>OCHKO<br><span id="score">0</span></div></div>
+</div>
+<div class="help">⬅️ ➡️ yoki A / D — burilish &nbsp; • &nbsp; ↑ / W — tezlashish &nbsp; • &nbsp; ↓ / S — sekinlashish</div>
+<div id="overlay">
+  <div class="card">
+    <h1>🏁 <span class="green">COBALT</span> RACING</h1>
+    <p>Oq Chevrolet Cobalt bilan keng, tekis shahar yo‘lida hayda!</p>
+    <p>Yo‘ldagi boshqa mashinalardan qoch va imkon qadar ko‘p ochko yig‘.</p>
+    <button id="start">O‘YINNI BOSHLASH</button>
+  </div>
+</div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const speedEl = document.getElementById('speed');
+const scoreEl = document.getElementById('score');
+const overlay = document.getElementById('overlay');
+let W=0,H=0, running=false, last=0, score=0, speed=150, playerX=0, roadOffset=0, spawn=0, obstacles=[];
+const keys = {};
+function resize(){ W=canvas.width=innerWidth*devicePixelRatio; H=canvas.height=innerHeight*devicePixelRatio; canvas.style.width=innerWidth+'px'; canvas.style.height=innerHeight+'px'; ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); W=innerWidth; H=innerHeight; }
+addEventListener('resize',resize); resize();
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true; if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+function polygon(points, color){ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);for(let p of points.slice(1))ctx.lineTo(p[0],p[1]);ctx.closePath();ctx.fill();}
+function roadAt(y){const t=y/H; const half= W*(.08+.42*t); return {l:W/2-half,r:W/2+half,half,bend:0};}
+function drawCar(x,y,w,h,color,isPlayer=false){
+  ctx.save(); ctx.translate(x,y);
+  // soft contact shadow
+  ctx.fillStyle='rgba(0,0,0,.42)'; ctx.beginPath(); ctx.ellipse(0,h*.12,w*.62,h*.55,0,0,Math.PI*2); ctx.fill();
+  // wheels and wheel arches
+  ctx.fillStyle='#080a0c';
+  for (const side of [-1,1]) {
+    ctx.beginPath(); ctx.roundRect(side*w*.34-w*.10,-h*.30,w*.20,h*.28,5); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(side*w*.34-w*.10,h*.18,w*.20,h*.28,5); ctx.fill();
+  }
+  // body silhouette with hood, cabin and trunk
+  const body=ctx.createLinearGradient(-w/2,0,w/2,0);
+  if(isPlayer){body.addColorStop(0,'#9da4a8');body.addColorStop(.22,'#ffffff');body.addColorStop(.52,'#e9edef');body.addColorStop(.8,'#c4cbd0');body.addColorStop(1,'#737c82');}
+  else {body.addColorStop(0,'#7d2924');body.addColorStop(.45,color);body.addColorStop(1,'#651d1a');}
+  ctx.fillStyle=body; ctx.beginPath();
+  ctx.moveTo(-w*.39,h*.42);ctx.lineTo(-w*.47,h*.12);ctx.lineTo(-w*.40,-h*.25);
+  ctx.lineTo(-w*.27,-h*.44);ctx.quadraticCurveTo(0,-h*.52,w*.27,-h*.44);
+  ctx.lineTo(w*.40,-h*.25);ctx.lineTo(w*.47,h*.12);ctx.lineTo(w*.39,h*.42);
+  ctx.quadraticCurveTo(0,h*.52,-w*.39,h*.42);ctx.fill();
+  // roof / glass
+  ctx.fillStyle='#152a38';ctx.beginPath();
+  ctx.moveTo(-w*.27,-h*.26);ctx.lineTo(-w*.17,-h*.42);
+  ctx.quadraticCurveTo(0,-h*.47,w*.17,-h*.42);ctx.lineTo(w*.27,-h*.26);
+  ctx.lineTo(w*.30,-h*.02);ctx.lineTo(-w*.30,-h*.02);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.45)';ctx.lineWidth=1.2;ctx.stroke();
+  // windshield reflections and center pillar
+  ctx.fillStyle='rgba(190,225,240,.22)';ctx.beginPath();ctx.moveTo(-w*.18,-h*.39);ctx.lineTo(-w*.06,-h*.42);ctx.lineTo(-w*.12,-h*.05);ctx.lineTo(-w*.25,-h*.05);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#66727a';ctx.fillRect(-w*.018,-h*.42,w*.036,h*.39);
+  // hood highlights, grille and badge
+  ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(-w*.28,h*.03);ctx.quadraticCurveTo(0,h*.10,w*.28,h*.03);ctx.stroke();
+  ctx.fillStyle='#20272c';ctx.fillRect(-w*.19,h*.25,w*.38,h*.095);
+  ctx.fillStyle='#9da7ad';ctx.fillRect(-w*.07,h*.28,w*.14,h*.025);
+  // lights
+  ctx.fillStyle='#fff6d6';ctx.shadowColor='#fff';ctx.shadowBlur=isPlayer?12:3;
+  ctx.fillRect(-w*.36,h*.15,w*.13,h*.07);ctx.fillRect(w*.23,h*.15,w*.13,h*.07);ctx.shadowBlur=0;
+  ctx.fillStyle='#e51f24';ctx.fillRect(-w*.35,h*.37,w*.12,h*.06);ctx.fillRect(w*.23,h*.37,w*.12,h*.06);
+  // mirrors
+  ctx.fillStyle=isPlayer?'#dce1e4':'#842e29';ctx.fillRect(-w*.48,-h*.10,w*.10,h*.07);ctx.fillRect(w*.38,-h*.10,w*.10,h*.07);
+  if(isPlayer){ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();}
+  ctx.restore();
+}
+function draw(){
+  // sky and distant hills
+  const sky=ctx.createLinearGradient(0,0,0,H); sky.addColorStop(0,'#75b8d8'); sky.addColorStop(.48,'#d6e8df'); sky.addColorStop(.49,'#4c8c52'); sky.addColorStop(1,'#174324');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  polygon([[0,H*.48],[W*.15,H*.35],[W*.32,H*.47],[W*.52,H*.33],[W*.72,H*.47],[W*.9,H*.36],[W,H*.46],[W,H],[0,H]],'#557b58');
+  // straight roadside city blocks, inspired by an open-world driving/parking game
+  for(let side of [-1,1]){
+    for(let i=0;i<5;i++){
+      const z=((i/5+roadOffset*.16)%1), y=H*.39+z*H*.24, scale=.25+z*.9;
+      const road=roadAt(y), bw=(W*.075)*scale, bh=(H*.10)*scale;
+      const x=side<0?road.l-bw*1.45:road.r+bw*.45;
+      ctx.fillStyle=['#a9b2b5','#c2b6a2','#87969b'][i%3];
+      ctx.fillRect(x,y-bh,bw,bh);
+      ctx.fillStyle='#394d59';
+      for(let wx=0;wx<3;wx++) for(let wy=0;wy<2;wy++){
+        ctx.fillRect(x+bw*(.14+wx*.27),y-bh+bh*(.18+wy*.34),bw*.13,bh*.16);
+      }
+      ctx.fillStyle='#59645d';ctx.fillRect(x-bw*.04,y-bh*.12,bw*1.08,bh*.12);
+    }
+  }
+  // road
+  const top=roadAt(H*.36), bottom=roadAt(H);
+  polygon([[top.l,H*.36],[top.r,H*.36],[bottom.r,H],[bottom.l,H]],'#343a40');
+  // shoulders
+  polygon([[top.l-10,H*.36],[top.l,H*.36],[bottom.l,H],[bottom.l-35,H]],'#d8d3c5');
+  polygon([[top.r,H*.36],[top.r+10,H*.36],[bottom.r+35,H],[bottom.r,H]],'#d8d3c5');
+  // dashed lane lines with perspective
+  for(let i=0;i<18;i++){
+    let z=((i/18+roadOffset)%1), y=H*.36+z*(H*.64), r=roadAt(y), dashH=5+z*25, x=W/2;
+    ctx.fillStyle='#f7f1d5';ctx.fillRect(x-3-z*2,y,6+z*4,dashH);
+    const edgeW=2+z*4; ctx.fillRect(r.l+(r.r-r.l)/3-edgeW/2,y,edgeW,dashH); ctx.fillRect(r.l+2*(r.r-r.l)/3-edgeW/2,y,edgeW,dashH);
+  }
+  // roadside trees
+  for(let i=0;i<14;i++){
+    let z=((i/14+roadOffset*.55)%1), y=H*.38+z*H*.62, r=roadAt(y), size=10+z*42;
+    for(let side of [-1,1]){let x=side<0?r.l-size*1.3:r.r+size*1.3;ctx.fillStyle='#583d27';ctx.fillRect(x-size*.12,y-size*.3,size*.24,size*.65);ctx.fillStyle='#14552e';ctx.beginPath();ctx.arc(x,y-size*.45,size*.55,0,Math.PI*2);ctx.fill();ctx.fillStyle='#247541';ctx.beginPath();ctx.arc(x-size*.2,y-size*.62,size*.36,0,Math.PI*2);ctx.fill();}
+  }
+  // asphalt texture and trackside safety barriers
+  for(let i=0;i<95;i++){
+    const y=H*.39+((i*37+roadOffset*H*1.5)%(H*.61));
+    const r=roadAt(y); const x=r.l+(r.r-r.l)*(((i*19)%97)/100);
+    ctx.fillStyle='rgba(255,255,255,.10)';ctx.fillRect(x,y,1.5,2.5);
+  }
+  for(let side of [-1,1]){
+    for(let i=0;i<22;i++){
+      const z=((i/22+roadOffset*.9)%1), y=H*.39+z*H*.61, r=roadAt(y), size=2+z*8;
+      const x=side<0?r.l-size*2:r.r+size;
+      ctx.fillStyle=(i%2?'#f2f2ed':'#d63832');ctx.fillRect(x,y,size*2,size*.8);
+      ctx.fillStyle='#b9c0c2';ctx.fillRect(x,y-size*.25,size*2,size*.18);
+    }
+  }
+  // distant grandstands and floodlights
+  ctx.fillStyle='#66727a';ctx.fillRect(W*.04,H*.40,W*.16,H*.07);ctx.fillRect(W*.80,H*.40,W*.16,H*.07);
+  for(let side of [-1,1]){
+    const x=side<0?W*.08:W*.92;
+    ctx.strokeStyle='#dce8ed';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,H*.38);ctx.lineTo(x,H*.25);ctx.stroke();
+    ctx.fillStyle='#fff7ce';ctx.shadowColor='#fff';ctx.shadowBlur=12;ctx.fillRect(x-7,H*.245,14,5);ctx.shadowBlur=0;
+  }
+  // traffic
+  for(const o of obstacles){let y=o.y, r=roadAt(y), x=W/2+o.x*r.half*.72, size=.25+.75*((y/H-.36)/.64);drawCar(x,y,35+size*25,58+size*48,'#d84c43');}
+  // player car near bottom
+  let pr=roadAt(H*.88), px=W/2+playerX*pr.half*.68;
+  drawCar(px,H*.82,68,116,'#f4f5f2',true);
+}
+function endGame(){running=false;overlay.style.display='grid';overlay.querySelector('h1').innerHTML='🏁 <span class="green">O‘YIN TUGADI</span>';overlay.querySelector('p').textContent='Natijang: '+Math.floor(score)+' ochko. Yana urinib ko‘r!';document.getElementById('start').textContent='QAYTA BOSHLASH';}
+function loop(t){if(!running)return;let dt=Math.min((t-last)/1000,.04);last=t;
+  if(keys['arrowup']||keys['w']) speed=Math.min(260,speed+80*dt); else speed=Math.max(120,speed-12*dt);
+  if(keys['arrowdown']||keys['s']) speed=Math.max(70,speed-120*dt);
+  if(keys['arrowleft']||keys['a']) playerX-=1.35*dt;
+  if(keys['arrowright']||keys['d']) playerX+=1.35*dt;
+  playerX=Math.max(-.82,Math.min(.82,playerX));
+  roadOffset=(roadOffset+dt*(speed/190))%1; score+=dt*speed/12;
+  spawn-=dt; if(spawn<=0){obstacles.push({x:(Math.random()-.5)*1.15,y:H*.38});spawn=.95+Math.random()*.8;}
+  for(let o of obstacles)o.y+=dt*(250+speed*.65);
+  obstacles=obstacles.filter(o=>o.y<H+100);
+  for(let o of obstacles){let oy=o.y, ox=W/2+o.x*roadAt(oy).half*.72, px=W/2+playerX*roadAt(H*.88).half*.68;if(Math.abs(oy-H*.82)<75&&Math.abs(ox-px)<52){endGame();return;}}
+  if(Math.abs(playerX)>.9){endGame();return;}
+  speedEl.textContent=Math.round(speed);scoreEl.textContent=Math.floor(score);
+  draw(); requestAnimationFrame(loop);
+}
+document.getElementById('start').onclick=()=>{score=0;speed=150;playerX=0;roadOffset=0;obstacles=[];spawn=.5;overlay.style.display='none';overlay.querySelector('h1').innerHTML='🏁 <span class="green">COBALT</span> RACING';overlay.querySelectorAll('p')[0].textContent='Oq Chevrolet Cobalt bilan keng, tekis shahar yo‘lida hayda!';overlay.querySelectorAll('p')[1].textContent='Yo‘ldagi boshqa mashinalardan qoch va imkon qadar ko‘p ochko yig‘.';document.getElementById('start').textContent='O‘YINNI BOSHLASH';running=true;last=performance.now();requestAnimationFrame(loop);};
+draw();
+</script>
+</body>
+</html>
